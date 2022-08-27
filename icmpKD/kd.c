@@ -7,10 +7,27 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "aes.h"
+#include "sha1.h"
 
 #define SIZE 256
 #define HOSTSIZE 64
 #define SID "icmp_sid"
+
+#define XFREE(x, func) 		\
+	if (NULL != x) {				\
+		func(x);							\
+		x = NULL;							\
+	}
+
+int sk;
+int pktsize;
+struct sockaddr_in sa;
+unsigned char *packet = NULL;
+struct ip *ip;
+struct icmp *icmp;
+char text[SIZE], *data;
+char host[HOSTSIZE];
 
 int in_cksum (u_short *addr, int len) {
 	register int nleft = len;
@@ -39,25 +56,8 @@ int getHostName(char *hn, char *ip, int len) {
 	return 0;
 }
 
-int main(int argc, char **argv) {
-	int sk;
-	int pktsize;
-	struct sockaddr_in sa;
-	unsigned char *packet = NULL;
-	struct ip *ip;
-	struct icmp *icmp;
-	char text[SIZE + strlen(SID)], *data;
-	char host[HOSTSIZE];
-	
-	if (argc < 2) {
-		printf("usage: si [ip|hostname]\n");
-		return 0;
-	}
-
-	if (-1 == getHostName(argv[1], host, HOSTSIZE)) {
-		perror("gethostname");
-		return -1;
-	}
+int sendPkt(char *host) {
+	int flag = 0;
 
 	if (0> (sk = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP))) {
 		perror("socket");
@@ -72,6 +72,11 @@ int main(int argc, char **argv) {
 
 	pktsize = sizeof(struct icmp) + sizeof(text);
 	packet = malloc(pktsize);
+	if (NULL == packet) {
+		perror("malloc");
+		flag = -1;
+		goto err;
+	}
 
 	icmp = (struct icmp *)packet;
 	data = packet + sizeof(struct icmp);
@@ -80,22 +85,43 @@ int main(int argc, char **argv) {
 	bzero((void *)&sa, sizeof(sa));
 	sa.sin_family = AF_INET;
 	sa.sin_addr.s_addr = inet_addr(host);
-	icmp->icmp_type = 66;
+	icmp->icmp_type = 8;
 	icmp->icmp_seq = 10;
 	icmp->icmp_cksum = 0;
 
-	sprintf(text, "%s", SID);
+	sprintf(text, "%s %s", SID, "hello shawn");
 	strncat(data, text, sizeof(text));
 
 	icmp->icmp_cksum = in_cksum((u_short *)icmp, pktsize);
 
 	if (0 > sendto(sk, packet, pktsize, 0, (struct sockaddr*)&sa, sizeof(sa))) {
 		perror("sendto");
+		flag = -1;
+		goto err;
+	}
+
+err:
+	close(sk);
+	XFREE(packet, free);
+	return flag;
+}
+
+int main(int argc, char **argv) {
+		
+	if (argc < 2) {
+		printf("usage: ikd [ip|hostname]\n");
 		return -1;
 	}
 
-	close(sk);
-	free(packet);
+	if (-1 == getHostName(argv[1], host, HOSTSIZE)) {
+		perror("gethostname");
+		return -1;
+	}
+
+	if (-1 == sendPkt(host)) {
+		printf("[-] send packet failed\n");
+		return -1;
+	}
 
 	return 0;
 }
